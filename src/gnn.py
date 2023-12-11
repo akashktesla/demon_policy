@@ -18,65 +18,18 @@ class GNNModel_base(nn.module):
         return x
 
 
-import torch
-from torch_geometric.nn import MessagePassing
-from torch_geometric.utils import add_self_loops, degree
+class WordEncoder(torch.nn.Module):
+    def __init__(self, vocab_size, embedding_dim, hidden_dim):
+        super(WordEncoder, self).__init__()
+        self.embedding = Embedding(vocab_size, embedding_dim)
+        self.linear1 = Linear(embedding_dim * len(self.embedding.weight), hidden_dim)
+        self.linear2 = Linear(hidden_dim, hidden_dim)
+        self.linear3 = Linear(hidden_dim, output_size)
 
-class EdgePredictor(torch.nn.Module):
-    def __init__(self, in_dim, hidden_dim, out_dim):
-        super(EdgePredictor, self).__init__()
-        self.mlp = torch.nn.Sequential(
-            torch.nn.Linear(in_dim * 2, hidden_dim),
-            torch.nn.ReLU(),
-            torch.nn.Linear(hidden_dim, out_dim),
-            torch.nn.Sigmoid()
-        )
-
-    def forward(self, x, edge_index):
-        row, col = edge_index
-        edge_input = torch.cat([x[row], x[col]], dim=1)
-        return self.mlp(edge_input)
-
-class GraphGenerator(torch.nn.Module):
-    def __init__(self, in_dim, hidden_dim_node, hidden_dim_edge, out_dim_node, out_dim_edge):
-        super(GraphGenerator, self).__init__()
-        self.gnn = MessagePassing(aggr='add', flow='source_to_target')
-        self.edge_predictor = EdgePredictor(in_dim, hidden_dim_edge, 1)
-        self.node_updater = torch.nn.Sequential(
-            torch.nn.Linear(in_dim + 1, hidden_dim_node),
-            torch.nn.ReLU(),
-            torch.nn.Linear(hidden_dim_node, out_dim_node)
-        )
-        self.edge_attr_generator = torch.nn.Sequential(
-            torch.nn.Linear(in_dim * 2, hidden_dim_edge),
-            torch.nn.ReLU(),
-            torch.nn.Linear(hidden_dim_edge, out_dim_edge)
-        )
-
-    def forward(self, x, edge_index, edge_attr):
-        edge_index, _ = add_self_loops(edge_index, num_nodes=x.shape[0])
-        row, col = edge_index
-        deg = degree(row, x.shape[0], dtype=torch.float)
-        norm = deg.pow(-0.5)
-        norm[torch.isinf(norm)] = 0
-        x = x * norm.view(-1, 1)
-
-        # Message passing
-        x = self.gnn(x, edge_index)
-
-        # Edge prediction
-        edge_prob = self.edge_predictor(x, edge_index)
-
-        # Edge sampling
-        new_edge_index = torch.topk(edge_prob, k=int(edge_prob.shape[1] / 2), dim=-1)[1]
-
-        # Node feature update
-        new_x = self.node_updater(torch.cat([x, edge_prob], dim=1))
-
-        # Edge attribute generation
-        new_edge_attr = self.edge_attr_generator(torch.cat([new_x[row], new_x[col]], dim=1))
-
-        return new_x, new_edge_index, new_edge_attr
-
-
-
+    def forward(self, word_list):
+        embedded_words = self.embedding(word_list)
+        flattened_embedding = torch.flatten(embedded_words, 1)
+        hidden1 = torch.relu(self.linear1(flattened_embedding))
+        hidden2 = torch.relu(self.linear2(hidden1))
+        encoded_list = self.linear3(hidden2)
+        return encoded_list
